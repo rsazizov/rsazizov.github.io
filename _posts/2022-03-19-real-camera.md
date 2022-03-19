@@ -9,20 +9,20 @@ Poor jokes aside, I finally got a real camera (where got = communisted from my j
 
 I'll leave you with some photos below. I hope they get displayed properly on the first try (upd: they didn't).
 
-![](/assets/img/photos/DCIM00256.jpg)
+![](/assets/img/photos/DSC00256.jpg)
 
-![](/assets/img/photos/DCIM00262.jpg)
+![](/assets/img/photos/DSC00262.jpg)
 
-![](/assets/img/photos/DCIM00276.jpg)
+![](/assets/img/photos/DSC00276.jpg)
 
-![](/assets/img/photos/DCIM00284.jpg)
+![](/assets/img/photos/DSC00284.jpg)
 
-![](/assets/img/photos/DCIM00375.jpg)
+![](/assets/img/photos/DSC00375.jpg)
 
-![](/assets/img/photos/DCIM00379.jpg)
+![](/assets/img/photos/DSC00379.jpg)
 
-![](/assets/img/photos/DCIM00408.jpg)
+![](/assets/img/photos/DSC00408.jpg)
 
-![](/assets/img/photos/DCIM00447.jpg)
+![](/assets/img/photos/DSC00447.jpg)
 
-![](/assets/img/photos/DCIM00686.jpg)
+![](/assets/img/photos/DSC00686.jpg)
