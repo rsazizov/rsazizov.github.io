@@ -23,12 +23,12 @@ Let's suppose you run an object detector and got several bounding boxes for each
 overlapping boxes. Normally, you would do NMS for each class separately. That is if there are 2 overlapping boxes belonging to different classes, neither should 
 be eliminated as they designated different objects.
 
-![](https://github.com/rsazizov/rsazizov.github.io/assets/33909053/1a590105-6070-4933-b0a9-b024d5af7b24)
+![](assets/img/nms/boxes_vanilla.png)
 
 
 What `_batched_nms_coordinate_trick` does is it adds offsets to bounding boxes of the same class which gurantees zero overlap between boxes of different classes.
 
-![](https://github.com/rsazizov/rsazizov.github.io/assets/33909053/99bee93c-dd15-488c-88d6-72e7cac7fa9a)
+![](assets/img/nms/nms_tric.png)
 
 
 Then, these offsets are subtracted from the resulting coordinates and we get the same result. 
@@ -36,12 +36,12 @@ Then, these offsets are subtracted from the resulting coordinates and we get the
 There is actually a whole thread on this [issue](https://github.com/pytorch/vision/issues/1311#issuecomment-781329339). I decided to run my own benchmark and got this result 
 for 80 classes (averaged over 3 trials):
 
-![](https://github.com/rsazizov/rsazizov.github.io/assets/33909053/82c1a3b9-bc78-43d5-8003-ace06647a36d)
+![](assets/img/nms/bench.png)
 
 `_batched_nms_coordinate_trick` is actually faster for smaller inputs (though on my laptop the threshold seems to be around 2000 boxes rather than 1000).
 
-This is an interesting way to do batched nms, however it seems counter-intuitive. Math tells us that for $O(n^2)$ algorithm an increase in input size by a factor $t$ will result in 
-$(tn)^2 = t^2(n^2)$. On the other hand, running the algorithm $t$ times separately gives us $t(n^2)$ which means linear complexity with respect to the number of classes.
+This is an interesting way to do batched nms, however it seems counter-intuitive. Torchvision implements NMS in \(O(n^2)\) time. Math tells us that for \(O(n^2)\) algorithm an increase in input size by a factor \(t\) will result in 
+\((tn)^2 = t^2(n^2)\) increase in runtime. On the other hand, running the algorithm $t$ times separately gives us \(t(n^2)\) which means linear complexity with respect to the number of classes.
 
 My best guess here is that `_batched_nms_vanilla` has an overhead due to tensor masking which means worse data locality, though this requires a more in-depth profiling of PyTorch's C++ code
 which I might do in the future.
