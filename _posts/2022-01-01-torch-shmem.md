@@ -1,11 +1,6 @@
----
-layout: post
-title: PyTorch and Shared Memory
----
+# PyTorch and Shared Memory
 
-**DRAFT**
-
-Recently I stumbled upon a weird error when working on some code in PyTorch. Here is the minimal 
+Recently I stumbled upon a weird error while working with some PyTorch code. Here is the minimal 
 reproducible example:
 
 ```python
@@ -22,14 +17,8 @@ class RandomDataset(Dataset):
     def __len__(self) -> int:
         return self.size
 
-    def __getitem__(self, index) -> dict:
-        return {
-            'label1': False,
-            'label2': th.tensor([1]),
-            'label3': th.tensor([0.1, 0.2, 0.3, 0.4]),
-            'label4': th.tensor([1.0]),
-            'label5': index
-        }
+    def __getitem__(self, index) -> tuple:
+        return th.randn(10), th.randn(10), th.randn(10), th.randn(10)
 
 
 def main() -> None:
@@ -48,7 +37,7 @@ if __name__ == '__main__':
     main()
 ```
 
-Here we have a `RandomDataset` class which simply repeat the same dict object `size` times. In `main` we create
+Here we have a `RandomDataset` class which simply generates a tuple of 4 random tensors `size` times. In `main` we create
 a data loader with a single worker and iterate over batches appending them to `batches` list.
 
 If you try to run this, you would get a long stack trace that ends with this error message:
@@ -58,14 +47,13 @@ If you try to run this, you would get a long stack trace that ends with this err
 RuntimeError: unable to mmap 4 bytes from file <filename not specified>: Cannot allocate memory (12)
 ```
 
-We are told that PyTorch can't allocate memory. I checked `htop` and there was plenty of RAM available. So
-what's the issue here?
+We are told that `mmap` failed with error code 12 which suggests that we have exceeded some memory limit. As it turns
+out, this issue originated in `DataLoader` itself and is related to how DataLoader workers communicate with the main 
+process.
 
 ## DataLoader Multiprocessing
 
-When we created a data loader, we specified `num_workers = 1`. PyTorch allows several worker processes to 
-process data in parallel. The reasoning behind this is to avoid data loading bottlenecks, as they limit
-GPU utilization. A typical PyTorch training loop would look something like this:
+A typical PyTorch training loop would look something like this:
 
 ```
 while data_loader is not empty:
@@ -75,39 +63,50 @@ while data_loader is not empty:
 ```
 
 This is essentially a sequential process. First, we ask our DataLoader to sample the dataset and collate a
-batch for us to use. Depending on your preprocessing stages (e.g. loading from a slow storage, 
+batch for us to use. Then, we do a forward and backward passes (which utilize GPU primarily). Once we are finished, we
+wait for the second batch to load.
+
+![](/assets/img/torch-shmem/sync-model.png)
+
+Depending on your Dataset stages (e.g. loading from slow storage, 
 augmentations, etc...), this step can take a long time that GPU will spend idling. Since data can usually be
 loaded and preprocessed in parallel, a natural idea is to utilize some sort of parallelism inside the data
-loader. This is exactly what PyTorch does under the hood.
+loader. Moreover, with parallelism, we can actually pre-fetch the next batch while we are waiting for the model to finish. 
+
+
+![](/assets/img/torch-shmem/async-model.png)
+
+
+This is exactly what PyTorch DataLoaders do under the hood.
 
 ![](/assets/img/torch-shmem/workers.png)
 
 PyTorch uses a simple work-queue pattern. DataLoader spawns several worker processes and creates
 an index queue for each worker. When you iterate over the data loader, it splits dataset indices
-among the workers and distributes them to index queues. Workers then do the actual sampling (`next(dataset)`)
-and send the result to the common data queue, which is then read back by the data loader.
+among the workers and distributes them to their index queues. Workers then do the actual sampling (`dataset.__getitem__`)
+and send the result to the common data queue, which is then read back by the data loader and returned to us.
 
-Let's talk a bit more about these queues. Due to [GIL](), Python can't have proper threading
-parallelism, so PyTorch has to resolve to processes. Using processes avoids GIL, though
-introduces some other complications like a need for IPC. 
+Due to [GIL](https://realpython.com/python-gil/), Python can't have proper threading parallelism,
+so PyTorch has to resolve to processes. Using processes avoids GIL, though introduces some other complications like a need for IPC. 
 
-Linux (and other operating systems, but I'll focus on Linux here) has memory protection mechanisms which were
+Linux (and other operating systems, but I'll focus on Linux here) has memory protection mechanisms that were
 put in place to prevent processes from reading and mutating each other's memory. This is somewhat of a necessity due
 to security reasons, though it is inconvenient when we actually want two processes to share data (like in this case).
 The way around this is to use IPC (Inter-Process Communication) mechanisms. Data and Index queues in the diagram
-above are implemented using modified Python's multithreading.Queue object, which is essentially a unix pipe. They are 
-easy to work with and thread-safe, which is convenient. However, the problem with this IPC is that it copies data around
-a lot. 
+above are implemented using modified Python's `multithreading.Queue` object, which is essentially a Unix pipe. They are 
+easy to work with and thread-safe, which is convenient.
 
-Suppose a worker process samples the dataset which allocates a new tensor. Tensor is allocated inside the worker process'
-memory and to transfer it to the main process you would need to copy the entire tensor, which is slow and inefficient.
-For sharing tensors, PyTorch uses a special kind of IPC called shared memory. Shared memory are essentially memory regions
-that can be accessed by several processes at the same time, which means no expensive memory copying is needed.
+However, suppose a worker process samples the dataset which allocates a new tensor. Tensor is allocated inside the worker process
+memory and to transfer it to the main process you would need to push the entire tensor through a pipe which is slow and inefficient.
+
+For sharing tensors between processes, PyTorch uses a special kind of IPC called shared memory. Shared memory is essentially 
+a memory region that can be accessed by several processes at the same time. Unlike pipes, once a shared memory region
+is mapped, the kernel is not involved with data transfers which means bytes can be copied more efficiently.
 
 ## Shared Tensors
 
-So when a Tensor is put inside the data queue, PyTorch creates a new shared memory regions and places tensor's data
-in the region. This happens inside `reduce_storage` function in
+So when a Tensor is put inside the data queue, PyTorch creates a new shared memory region and places tensor data
+in it. This happens inside `reduce_storage` function in
 [`torch/multiprocessing/reductions.py`](https://github.com/pytorch/pytorch/blob/main/torch/multiprocessing/reductions.py#L428).
 `reduce_storage` is called when a tensor is pushed into a queue (see [`queue.py`](https://github.com/pytorch/pytorch/blob/main/torch/multiprocessing/queue.py#L16C11-L16C11)). 
 
@@ -124,8 +123,39 @@ def reduce_storage(storage):
 
 `storage._share_fd_cpu_()` is what actually places the tensor data into shared memory. It is bound to 
 [`THPStorage_shareFd`](https://github.com/pytorch/pytorch/blob/11602ac564c0e3178b38a65e09be13644322d303/torch/csrc/StorageSharing.cpp#L194)
-function which uses [`MapAllocator`](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/MapAllocator.cpp#L262C35-L262C35) 
-class with `ALLOCATOR_MAPPED_SHARED` which instructs `MapAllocator` to create a new shared memory region.
+function which creates new storage using [`MapAllocator`](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/MapAllocator.cpp#L262C35-L262C35) 
+class with `ALLOCATOR_MAPPED_SHARED` flag which instructs `MapAllocator` to create a new shared memory region.
+
+```c++
+...
+#ifdef HAVE_SHM_OPEN
+        if((fd = shm_open(filename_.c_str(), flags, (mode_t)0600)) == -1) {
+          TORCH_CHECK(false, "unable to open shared memory object <", filename_, "> in read-write mode: ", strerror(errno), " (", errno, ")");
+        }
+#else
+...
+```
+
+`shm_open` is what actually creates a shared memory segment. In the same function [`mmap`](https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/MapAllocator.cpp#L320C39-L320C39) is used to map the newly 
+created segment:
+
+```c++
+if (flags_ & (ALLOCATOR_MAPPED_SHARED | ALLOCATOR_MAPPED_SHAREDMEM)) {
+    base_ptr_ = mmap(nullptr, size_, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+}
+```
+
+Then, the pointer to the region is used to create a new `Storage` and the original tensor is simply copied into it:
+
+```c++
+at::Storage new_storage(at::new_shm_fd_storage(storage.nbytes()));
+{
+    // Copying into shared memory can be slow, so release the GIL
+    pybind11::gil_scoped_release no_gil;
+    // Copy data from old storage into the new one
+    at::storage_copy(new_storage, storage);
+}
+```
 
 Thanks to PyTorch, we can actually access this API from Python. `Tensor` class implements two related methods:
 [`memory_share_()`](https://pytorch.org/docs/stable/generated/torch.Tensor.share_memory_.html)
@@ -133,7 +163,7 @@ Thanks to PyTorch, we can actually access this API from Python. `Tensor` class i
 [`is_shared()`](https://pytorch.org/docs/stable/generated/torch.Tensor.is_shared.html).
 
 Let's play around with them a little. On Linux, shared memory can be inspected using `lsof /dev/shm` command.
-PyTorch uses `torch/` prefix with its tensors. Let's try them:
+PyTorch uses `torch_` prefix with its tensors. Let's try them:
 
 ```python
 import torch as th
@@ -167,18 +197,40 @@ tensor.
 
 ## Shared Memory Limits
 
-That was a lot of information to handle, though now we can safely return to the initial code snippet and identify
-the problem:
+That was a lot of information to handle, though we can finally return to the initial code snippet and identify
+the problem. We now know that tensors that were sent through the queue are shared, let's check it:
 
 ```python
-batches = []
-
+...
 for batch in data_loader:
     print(batch.is_shared()) # True
-    ...
+    batches.append(batch)
+...
 ```
 
-So tensors arrive shared by default. This is a problem here because we *save* batches in `batches` list,
+Tensors arrive shared by default. This is a problem here because we *save* batches in `batches` list,
 which means that `batch` tensor is not garbage collected when it goes out of scope and the shared memory region 
-remains alive. 
+remains alive. Shared memory is not unlimited and once we hit the limit we get the error from `_new_shared_fd_cpu` 
+function which we saw earlier.
 
+```
+    storage = cls._new_shared_fd_cpu(fd, size)
+RuntimeError: unable to mmap 4 bytes from file <filename not specified>: Cannot allocate memory (12)
+```
+
+There are 2 ways to solve this problem, the easiest one is to set `num_workers` to 0. This way everything happens inside
+the main process and there's no need for IPC. 
+
+A better solution would be to move arriving tensors from shared memory into main process memory. 
+
+
+```python
+...
+for batch in data_loader:
+    print(batch.is_shared()) # True
+    batches.append(batch.clone())
+...
+```
+
+This way, original tensor data that lives in shared memory gets garbage collected as we are cloning it, and no references
+are stored.
