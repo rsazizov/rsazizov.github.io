@@ -1,4 +1,7 @@
-# PyTorch and Shared Memory
+---
+layout: post
+title: PyTorch DataLoaders and Shared Memory
+---
 
 Recently I stumbled upon a weird error while working with some PyTorch code. Here is the minimal 
 reproducible example:
@@ -48,7 +51,7 @@ RuntimeError: unable to mmap 4 bytes from file <filename not specified>: Cannot 
 ```
 
 We are told that `mmap` failed with error code 12 which suggests that we have exceeded some memory limit. As it turns
-out, this issue originated in `DataLoader` itself and is related to how DataLoader workers communicate with the main 
+out, this issue originates in `DataLoader` itself and is related to how DataLoader workers communicate with the main 
 process.
 
 ## DataLoader Multiprocessing
@@ -64,40 +67,40 @@ while data_loader is not empty:
 
 This is essentially a sequential process. First, we ask our DataLoader to sample the dataset and collate a
 batch for us to use. Then, we do a forward and backward passes (which utilize GPU primarily). Once we are finished, we
-wait for the second batch to load.
+wait for the second batch to load before we can do another forward pass.
 
 ![](/assets/img/torch-shmem/sync-model.png)
 
-Depending on your Dataset stages (e.g. loading from slow storage, 
-augmentations, etc...), this step can take a long time that GPU will spend idling. Since data can usually be
+Depending on your Dataset (e.g. loading from slow storage, 
+costly, augmentations, etc), this step can take a long time that GPU will spend idling. Since data can usually be
 loaded and preprocessed in parallel, a natural idea is to utilize some sort of parallelism inside the data
 loader. Moreover, with parallelism, we can actually pre-fetch the next batch while we are waiting for the model to finish. 
 
 
 ![](/assets/img/torch-shmem/async-model.png)
 
-
-This is exactly what PyTorch DataLoaders do under the hood.
+This is exactly what PyTorch DataLoader does under the hood.
 
 ![](/assets/img/torch-shmem/workers.png)
 
 PyTorch uses a simple work-queue pattern. DataLoader spawns several worker processes and creates
 an index queue for each worker. When you iterate over the data loader, it splits dataset indices
-among the workers and distributes them to their index queues. Workers then do the actual sampling (`dataset.__getitem__`)
-and send the result to the common data queue, which is then read back by the data loader and returned to us.
+among the workers and distributes them to their index queues. Workers then pull the indices and do the actual 
+sampling (e.g. `dataset.__getitem__`) with given indices and send the result to the common data queue, 
+which is then read back by the data loader and returned to us.
 
 Due to [GIL](https://realpython.com/python-gil/), Python can't have proper threading parallelism,
 so PyTorch has to resolve to processes. Using processes avoids GIL, though introduces some other complications like a need for IPC. 
 
 Linux (and other operating systems, but I'll focus on Linux here) has memory protection mechanisms that were
 put in place to prevent processes from reading and mutating each other's memory. This is somewhat of a necessity due
-to security reasons, though it is inconvenient when we actually want two processes to share data (like in this case).
+to security and stability reasons, though it is inconvenient when we actually want two processes to share data (like in this case).
 The way around this is to use IPC (Inter-Process Communication) mechanisms. Data and Index queues in the diagram
-above are implemented using modified Python's `multithreading.Queue` object, which is essentially a Unix pipe. They are 
-easy to work with and thread-safe, which is convenient.
+above are implemented using modified Python's `multithreading.Queue` object, which is essentially a Unix 
+[pipe](https://people.cs.rutgers.edu/~pxk/416/notes/c-tutorials/pipe.html). They are easy to work with and thread-safe, which is convenient.
 
 However, suppose a worker process samples the dataset which allocates a new tensor. Tensor is allocated inside the worker process
-memory and to transfer it to the main process you would need to push the entire tensor through a pipe which is slow and inefficient.
+memory and to transfer it to the main process you would need to push the entire tensor through the data queue pipe which is slow and inefficient.
 
 For sharing tensors between processes, PyTorch uses a special kind of IPC called shared memory. Shared memory is essentially 
 a memory region that can be accessed by several processes at the same time. Unlike pipes, once a shared memory region
@@ -203,7 +206,7 @@ the problem. We now know that tensors that were sent through the queue are share
 ```python
 ...
 for batch in data_loader:
-    print(batch.is_shared()) # True
+    print(batch[0].is_shared()) # True
     batches.append(batch)
 ...
 ```
@@ -221,14 +224,14 @@ RuntimeError: unable to mmap 4 bytes from file <filename not specified>: Cannot 
 There are 2 ways to solve this problem, the easiest one is to set `num_workers` to 0. This way everything happens inside
 the main process and there's no need for IPC. 
 
-A better solution would be to move arriving tensors from shared memory into main process memory. 
-
+A better solution would be to move arriving tensors from shared memory into main process memory. This can be achieved
+by a simple `clone()`.
 
 ```python
 ...
 for batch in data_loader:
     print(batch.is_shared()) # True
-    batches.append(batch.clone())
+        batches.append((b.clone() for b in batch))
 ...
 ```
 
