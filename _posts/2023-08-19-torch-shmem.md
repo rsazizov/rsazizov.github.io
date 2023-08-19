@@ -108,10 +108,10 @@ is mapped, the kernel is not involved with data transfers which means bytes can 
 
 ## Shared Tensors
 
-So when a Tensor is put inside the data queue, PyTorch creates a new shared memory region and places tensor data
-in it. This happens inside `reduce_storage` function in
+So when a tensor is put inside the data queue by a worker process, PyTorch creates a new shared memory region and places tensor data
+in it. What gets sent through the pipe is actually a file descriptor to the shared memory region. This happens inside `reduce_storage` function in
 [`torch/multiprocessing/reductions.py`](https://github.com/pytorch/pytorch/blob/main/torch/multiprocessing/reductions.py#L428).
-`reduce_storage` is called when a tensor is pushed into a queue (see [`queue.py`](https://github.com/pytorch/pytorch/blob/main/torch/multiprocessing/queue.py#L16C11-L16C11)). 
+`reduce_storage` is called when a tensor is pushed into a queue (see [`torch/multiprocessing/queue.py`](https://github.com/pytorch/pytorch/blob/main/torch/multiprocessing/queue.py#L16C11-L16C11)). 
 
 ```python
 def reduce_storage(storage):
@@ -166,7 +166,7 @@ Thanks to PyTorch, we can actually access this API from Python. `Tensor` class i
 [`is_shared()`](https://pytorch.org/docs/stable/generated/torch.Tensor.is_shared.html).
 
 Let's play around with them a little. On Linux, shared memory can be inspected using `lsof /dev/shm` command.
-PyTorch uses `torch_` prefix with its tensors. Let's try them:
+PyTorch uses `torch_` prefix with its tensors. Let's try to create a few shared tensors and see what happens:
 
 ```python
 import torch as th
@@ -192,7 +192,7 @@ We first create a tensor `x`. `data_ptr()` allows us to see the address where th
 We call `share_memory_()` method and `data_ptr()` returns a new address. Running `lsof /dev/shm | grep torch`:
 
 ```
-python3.1 2149720 pc3966  DEL    REG   0,26          170061957 /dev/shm/torch_2149720_1191275662_0
+python3.1 2149720 xxx  DEL    REG   0,26          170061957 /dev/shm/torch_2149720_1191275662_0
 ```
 
 We can see that python process created a new shmem region named `torch_2149720_1191275662_0` which is our actual
