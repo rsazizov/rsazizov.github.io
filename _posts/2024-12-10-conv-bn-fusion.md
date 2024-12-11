@@ -139,7 +139,7 @@ For reference, we will generate a random input tensor and calculate our ground t
 
 ```python
 x = th.rand(1, 3, 64, 64)
-y_gt = norm(conv(x))
+y_gt = model(x)
 ```
 
 Now let's create a fused convolution by following the equations above:
@@ -157,10 +157,10 @@ conv_norm_fused.bias.data = norm.weight * inv_sigma * conv.bias - norm.weight * 
 y_fused = conv_norm_fused(x)
 ```
 
-To test the output, let's find the maximum difference between `y_fused` and `y_gt`:
+To test the output, let's find the maximum absolute difference between `y_fused` and `y_gt`:
 
 ```python
-(y_fused - y_gt).max()
+(y_fused - y_gt).abs().max()
 ```
 
     tensor(4.1723e-07, grad_fn=<MaxBackward1>)
