@@ -8,7 +8,7 @@ This method is used by many optimization frameworks, such as TensorRT and ONNX R
 To understand how this is achieved, we’ll express these layers mathematically and demonstrate that applying batch
 normalization after a convolution is equivalent to a single convolution with adjusted parameters.
 
-> For a detailed introduction to batch normalization, I recommend Andrej Karpathy's video.
+> For a detailed introduction to batch normalization, I recommend [Andrej Karpathy's video](https://www.youtube.com/watch?v=P6sfmUTpUmc&t=2838s).
 
 Let's define our input $$I$$ which is a 3-dimensional tensor $$C_{in}$$ x $$H$$ x $$W$$ where $$C_{in}$$ is the number
 of channels, $$H$$ and $$W$$ are height and width of the input respectively. Let's say that $$I^{(k)}$$ refers to k-th
@@ -81,7 +81,7 @@ We are interested in the term $$\gamma^i \sigma^{-1}_i \left(F_i^k \circledast I
 > p \times \left( A \circledast B \right)_{i,j} = \sum_{m=0}^{k-1}\sum_{n=0}^{k-1} pA_{i+m,j+n}B_{i,j}
 > $$
 >
-> which is the same as $$ \left( pA\right) \circledast B _{i,j} $$, therefore we can use this property:
+> which is the same as $$ \left( \left( pA\right) \circledast B \right) _{i,j} $$, therefore we can use this property:
 >
 >$$
 > p \times \left( A \circledast B \right)_{i,j} = \left( \left(pA\right) \circledast B \right)_{i,j}
