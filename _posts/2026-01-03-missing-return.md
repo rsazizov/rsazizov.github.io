@@ -1,4 +1,7 @@
-# Missing Returns and Undefined Behavior in C++ 
+---
+layout: post
+title: Missing Returns and Undefined Behavior in C++
+---
 
 A while back, I ran into some poorly written C++ code and spent quite a bit of time debugging it. Here’s a minimal version:
 
