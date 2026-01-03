@@ -52,7 +52,7 @@ about Undefined Behavior.
 
 ## Undefined Behavior
 
-Most low-level languages have scenarios known as undefined behavior (UB). A classic example in C++ is using a variable before initializing it 
+Most low-level languages have scenarios known as Undefined Behavior. A classic example in C++ is using a variable before initializing it 
 
 ```c++
 #include <iostream>
