@@ -106,7 +106,7 @@ _Z9function2v:
 
 ```
 
-With -O1, the `ret` instruction disappears entirely, which means that the CPU doesn't jump back to main(). Instead, it "falls through" and continues executing the next instructions in memory, which happen to belong to `function2`.
+With -O1, the `ret` instruction disappears entirely, which means that the CPU doesn't jump back to `main()`. Instead, it "falls through" and continues executing the next instructions in memory, which happen to belong to `function2`.
 
 > Note that as we talked earlier, "falling through" is purely accidental here. Since the behavior is undefined, compiler
 > can inline, reorder or otherwise transform the code in an unpredictable way leading to unexpected execution paths.
